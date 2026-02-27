@@ -33,10 +33,23 @@ class WPBR_API {
             'permission_callback' => $auth['permission_callback'],
         ));
 
-        register_rest_route($ns, '/pages/(?P<id>\d+)', array(
-            'methods'  => 'GET',
-            'callback' => array($this, 'get_page'),
+        register_rest_route($ns, '/pages', array(
+            'methods'  => 'POST',
+            'callback' => array($this, 'create_page'),
             'permission_callback' => $auth['permission_callback'],
+        ));
+
+        register_rest_route($ns, '/pages/(?P<id>\d+)', array(
+            array(
+                'methods'  => 'GET',
+                'callback' => array($this, 'get_page'),
+                'permission_callback' => $auth['permission_callback'],
+            ),
+            array(
+                'methods'  => 'DELETE',
+                'callback' => array($this, 'delete_page'),
+                'permission_callback' => $auth['permission_callback'],
+            ),
         ));
 
         register_rest_route($ns, '/pages/(?P<id>\d+)/widgets', array(
@@ -193,6 +206,102 @@ class WPBR_API {
             'elType'     => $widget['elType'],
             'widgetType' => $widget['widgetType'] ?? null,
             'settings'   => $widget['settings'] ?? array(),
+        ));
+    }
+
+    // =============================================
+    // PAGE MANAGEMENT HANDLERS
+    // =============================================
+
+    public function create_page($request) {
+        $body = $request->get_json_params();
+
+        $title = sanitize_text_field($body['title'] ?? '');
+        if (empty($title)) {
+            return new WP_Error('missing_title', __('Campo "title" é obrigatório.', 'wp-backup-restorer'), array('status' => 400));
+        }
+
+        $post_data = array(
+            'post_title'  => $title,
+            'post_type'   => sanitize_text_field($body['post_type'] ?? 'page'),
+            'post_status' => sanitize_text_field($body['status'] ?? 'publish'),
+            'post_content' => '',
+        );
+
+        if (isset($body['slug'])) {
+            $post_data['post_name'] = sanitize_title($body['slug']);
+        }
+
+        if (isset($body['parent_id'])) {
+            $post_data['post_parent'] = (int) $body['parent_id'];
+        }
+
+        $post_id = wp_insert_post($post_data, true);
+        if (is_wp_error($post_id)) {
+            return $post_id;
+        }
+
+        update_post_meta($post_id, '_elementor_edit_mode', 'builder');
+        update_post_meta($post_id, '_elementor_version', defined('ELEMENTOR_VERSION') ? ELEMENTOR_VERSION : '3.0.0');
+
+        $template = $body['template'] ?? '';
+        if (!empty($template)) {
+            update_post_meta($post_id, '_wp_page_template', sanitize_text_field($template));
+        }
+
+        $elementor_data = '[]';
+        if (!empty($body['elementor_data']) && is_array($body['elementor_data'])) {
+            $elementor_data = wp_json_encode($body['elementor_data']);
+        } elseif (!empty($body['clone_from'])) {
+            $source_id = (int) $body['clone_from'];
+            $source_data = get_post_meta($source_id, '_elementor_data', true);
+            if (!empty($source_data)) {
+                $elementor_data = $source_data;
+                $source_css = get_post_meta($source_id, '_elementor_css', true);
+                if (!empty($source_css)) {
+                    update_post_meta($post_id, '_elementor_css', $source_css);
+                }
+                $source_template = get_post_meta($source_id, '_wp_page_template', true);
+                if (!empty($source_template) && empty($template)) {
+                    update_post_meta($post_id, '_wp_page_template', $source_template);
+                }
+            }
+        }
+
+        update_post_meta($post_id, '_elementor_data', $elementor_data);
+
+        return new WP_REST_Response(array(
+            'success'   => true,
+            'id'        => $post_id,
+            'title'     => $title,
+            'permalink' => get_permalink($post_id),
+            'edit_url'  => admin_url("post.php?post={$post_id}&action=elementor"),
+        ), 201);
+    }
+
+    public function delete_page($request) {
+        $id = (int) $request->get_param('id');
+        $force = filter_var($request->get_param('force'), FILTER_VALIDATE_BOOLEAN);
+
+        $post = get_post($id);
+        if (!$post) {
+            return new WP_Error('not_found', __('Página não encontrada.', 'wp-backup-restorer'), array('status' => 404));
+        }
+
+        if ($force) {
+            $result = wp_delete_post($id, true);
+        } else {
+            $result = wp_trash_post($id);
+        }
+
+        if (!$result) {
+            return new WP_Error('delete_failed', __('Falha ao deletar a página.', 'wp-backup-restorer'), array('status' => 500));
+        }
+
+        return rest_ensure_response(array(
+            'success' => true,
+            'id'      => $id,
+            'action'  => $force ? 'deleted' : 'trashed',
         ));
     }
 
