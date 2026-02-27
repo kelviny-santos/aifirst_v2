@@ -156,6 +156,9 @@ class WPBR_DB_Restorer {
         // 3g. Flush WordPress object cache
         wp_cache_flush();
 
+        // 3h. Flush rewrite rules and regenerate .htaccess for new directory
+        $this->flush_rewrite_rules_safe();
+
         return array(
             'tables_created' => $tables_created,
             'queries_run'    => $queries_run,
@@ -426,6 +429,28 @@ class WPBR_DB_Restorer {
                 array('option_value' => serialize($plugins)),
                 array('option_name' => 'active_plugins')
             );
+        }
+    }
+
+    // ================================================================
+    // REWRITE RULES / .HTACCESS
+    // ================================================================
+
+    private function flush_rewrite_rules_safe() {
+        $options_table = $this->target_prefix . 'options';
+        $this->wpdb->delete($options_table, array('option_name' => 'rewrite_rules'));
+
+        if (!function_exists('save_mod_rewrite_rules')) {
+            require_once ABSPATH . 'wp-admin/includes/misc.php';
+        }
+        if (!function_exists('get_home_path')) {
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+        }
+
+        global $wp_rewrite;
+        if ($wp_rewrite) {
+            $wp_rewrite->init();
+            $wp_rewrite->flush_rules(true);
         }
     }
 

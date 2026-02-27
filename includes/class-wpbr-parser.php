@@ -233,12 +233,69 @@ class WPBR_Parser {
             }
         }
 
+        // Fallback: extract site_url from SQL INSERT statements
+        if (empty($info['site_url']) && isset($this->inner_files['database'])) {
+            $sql_file = $this->inner_files['database']['file'];
+            $detected = $this->extract_siteurl_from_sql($sql_file);
+            if (!empty($detected)) {
+                $info['site_url'] = $detected;
+                if (empty($info['home_url'])) {
+                    $info['home_url'] = $detected;
+                }
+            }
+        }
+
+        // Fallback: extract table_prefix from SQL CREATE TABLE statements
+        if (empty($info['table_prefix']) && isset($this->inner_files['database'])) {
+            $sql_file = $this->inner_files['database']['file'];
+            $detected = $this->extract_prefix_from_sql($sql_file);
+            if (!empty($detected)) {
+                $info['table_prefix'] = $detected;
+            }
+        }
+
         return $info;
     }
 
     /**
      * Cleanup temp directory
      */
+    private function extract_siteurl_from_sql($sql_file) {
+        $handle = fopen($sql_file, 'r');
+        if (!$handle) return '';
+
+        while (($line = fgets($handle)) !== false) {
+            if (preg_match("/'siteurl'\s*,\s*'(https?:\/\/[^']+)'/", $line, $m)) {
+                fclose($handle);
+                return rtrim($m[1], '/');
+            }
+            if (ftell($handle) > 10 * 1024 * 1024) {
+                break;
+            }
+        }
+
+        fclose($handle);
+        return '';
+    }
+
+    private function extract_prefix_from_sql($sql_file) {
+        $handle = fopen($sql_file, 'r');
+        if (!$handle) return '';
+
+        while (($line = fgets($handle)) !== false) {
+            if (preg_match('/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+_)options`?/i', $line, $m)) {
+                fclose($handle);
+                return $m[1];
+            }
+            if (ftell($handle) > 1024 * 1024) {
+                break;
+            }
+        }
+
+        fclose($handle);
+        return '';
+    }
+
     public function cleanup($temp_dir) {
         if (empty($temp_dir) || !is_dir($temp_dir)) {
             return;
