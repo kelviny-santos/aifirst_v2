@@ -256,10 +256,12 @@ class WPBR_API {
             $source_id = (int) $body['clone_from'];
             $source_data = get_post_meta($source_id, '_elementor_data', true);
             if (!empty($source_data)) {
-                $elementor_data = $source_data;
-                $source_css = get_post_meta($source_id, '_elementor_css', true);
-                if (!empty($source_css)) {
-                    update_post_meta($post_id, '_elementor_css', $source_css);
+                $decoded = json_decode($source_data, true);
+                if (is_array($decoded)) {
+                    $this->regenerate_element_ids($decoded);
+                    $elementor_data = wp_json_encode($decoded);
+                } else {
+                    $elementor_data = $source_data;
                 }
                 $source_template = get_post_meta($source_id, '_wp_page_template', true);
                 if (!empty($source_template) && empty($template)) {
@@ -790,6 +792,18 @@ class WPBR_API {
     // =============================================
     // HELPERS
     // =============================================
+
+    private function regenerate_element_ids(array &$elements) {
+        foreach ($elements as &$el) {
+            if (isset($el['id'])) {
+                $el['id'] = bin2hex(random_bytes(4));
+            }
+            if (!empty($el['elements']) && is_array($el['elements'])) {
+                $this->regenerate_element_ids($el['elements']);
+            }
+        }
+        unset($el);
+    }
 
     private function sanitize_settings($settings, $depth = 0) {
         $sanitized = array();
